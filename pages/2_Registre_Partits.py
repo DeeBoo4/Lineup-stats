@@ -53,11 +53,16 @@ if not games_df.empty:
 
     show_cols = ["Data", "Local", "Visitant", "Resultat", "MVP"]
 
-    def _color_rows(row):
-        color = "#c6efce" if is_win.loc[row.name] else "#ffc7ce"
-        return [f"background-color: {color}; color: #000000"] * len(row)
+    def _color_result_col(col):
+        """Apply background colour only to the Resultat column."""
+        return [
+            f"background-color: {'#c6efce' if is_win.loc[idx] else '#ffc7ce'}; color: #000000"
+            for idx in col.index
+        ]
 
-    styled = display_df[show_cols].style.apply(_color_rows, axis=1)
+    styled = display_df[show_cols].style.apply(
+        _color_result_col, subset=["Resultat"], axis=0
+    )
 
     st.dataframe(
         styled,

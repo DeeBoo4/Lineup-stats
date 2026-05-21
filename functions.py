@@ -88,9 +88,10 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
         ]
     )
 
-    # Sort: by abs_minute, with end_period events last within the same minute
+    # Sort: end_period FIRST within each minute so the period is closed before
+    # the next period's starters (period_min=0 sub_ins) are processed.
     events = pbp_df.assign(
-        _sort_order=pbp_df["event_type"].map(lambda v: 1 if v == "end_period" else 0)
+        _sort_order=pbp_df["event_type"].map(lambda v: 0 if v == "end_period" else 1)
     ).sort_values(["abs_minute", "_sort_order"]).drop(columns="_sort_order").to_dict("records")
 
     cbturo_is_home = _detect_home_away(events, cbturo_players)
@@ -99,6 +100,7 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
     stints: list[Stint] = []
     stint_start: float = 0.0
     score_at_start: tuple[int, int] = (0, 0)
+    current_period: int = -1   # tracks which period's starters are in active
 
     def close(end_abs: float, h: int, a: int):
         nonlocal stint_start, score_at_start
@@ -121,17 +123,21 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
         abs_min = float(evt.get("abs_minute", 0))
         etype = str(evt.get("event_type", ""))
         player = str(evt.get("player_name") or "")
-        team = str(evt.get("team_code") or "")
         h = int(evt.get("home_score") or score_at_start[0])
         a = int(evt.get("away_score") or score_at_start[1])
         period_min = int(evt.get("minute_in_period", 1))
+        period = int(evt.get("period", current_period))
 
         if etype == "sub_in" and player in cbturo_players:
             # Note: we do NOT filter by team_code here because PBP team codes
             # can be mis-assigned; cbturo_players (from box scores) is the
             # reliable source of truth after PBP-based reclassification.
             if period_min == 0:
-                # Period-start batch — accumulate starters without closing
+                # Period-start starters — reset active when entering a new period
+                # so previous period's players don't accumulate.
+                if period != current_period:
+                    active.clear()
+                    current_period = period
                 if player not in active:
                     active.append(player)
             else:
@@ -153,7 +159,8 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
             stint_start = abs_min
             score_at_start = (h, a)
 
-    return stints
+    # Safety net: discard any malformed stints with impossible lineup sizes
+    return [s for s in stints if 1 <= len(s.players) <= 5]
 
 
 # ---------------------------------------------------------------------------
