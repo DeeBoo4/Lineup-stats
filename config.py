@@ -6,14 +6,18 @@ load_dotenv()
 
 def _get(key: str, default: str = "") -> str:
     """Read from env or Streamlit secrets (Cloud deployment)."""
+    # 1. Local .env file (loaded by python-dotenv at the top of this module)
     val = os.getenv(key, "")
     if val:
         return val
+    # 2. Streamlit Cloud secrets
     try:
         import streamlit as st
-        return st.secrets.get(key, default)
+        if key in st.secrets:
+            return str(st.secrets[key])
     except Exception:
-        return default
+        pass
+    return default
 
 
 TEAM_NAME = "CB TURO A"
