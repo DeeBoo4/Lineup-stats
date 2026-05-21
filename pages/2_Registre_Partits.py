@@ -43,8 +43,24 @@ if not games_df.empty:
     )
     mvp_col = games_df["mvp_player_name"] if "mvp_player_name" in games_df.columns else None
     display_df["MVP"] = mvp_col.fillna("—") if mvp_col is not None else "—"
+
+    # Determine win/loss for each row
+    is_win = games_df.apply(
+        lambda r: (r["home_score"] > r["away_score"]) if r.get("is_home", True)
+                  else (r["away_score"] > r["home_score"]),
+        axis=1,
+    )
+
+    show_cols = ["Data", "Local", "Visitant", "Resultat", "MVP"]
+
+    def _color_rows(row):
+        color = "#c6efce" if is_win.loc[row.name] else "#ffc7ce"
+        return [f"background-color: {color}; color: #000000"] * len(row)
+
+    styled = display_df[show_cols].style.apply(_color_rows, axis=1)
+
     st.dataframe(
-        display_df[["Data", "Local", "Visitant", "Resultat", "MVP"]],
+        styled,
         hide_index=True,
         use_container_width=True,
     )
