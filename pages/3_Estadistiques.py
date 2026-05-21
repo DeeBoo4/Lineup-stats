@@ -35,8 +35,8 @@ with tab_season:
         show_ratings = st.toggle("Mostrar ratings", value=False)
 
         df["mvp"] = df["player_name"].map(lambda p: mvp_counts.get(p, 0))
-        df["min_pg"] = (df["minutes"] / df["games"].replace(0, pd.NA)).round(1)
-        df["pts_pg"] = (df["pts"]     / df["games"].replace(0, pd.NA)).round(1)
+        df["min_pg"] = (df["minutes"] / df["games"].replace(0, pd.NA)).fillna(0.0).round(1)
+        df["pts_pg"] = (df["pts"]     / df["games"].replace(0, pd.NA)).fillna(0.0).round(1)
 
         display_df = df.copy()
         display_df["player_name"] = display_df["player_name"].apply(short_name)
