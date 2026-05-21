@@ -18,10 +18,10 @@ if not season_id:
 
 st.subheader(f"Temporada {season_label}")
 
-tab_season, tab_game = st.tabs(["Temporada", "Per Partit"])
+tab_season, tab_game = st.tabs(["Temporada", "Partits"])
 
 # ---------------------------------------------------------------------------
-# Tab 1 — Season totals
+# Tab 1 — Season stats (toggle between absolute/per-game and ratings)
 # ---------------------------------------------------------------------------
 with tab_season:
     with st.spinner("Carregant…"):
@@ -32,60 +32,87 @@ with tab_season:
     if df.empty:
         st.info("Encara no hi ha dades de jugadores per a aquesta temporada.")
     else:
-        show_ratings = st.toggle("Mostrar ratings On/Off", value=False)
+        show_ratings = st.toggle("Mostrar ratings", value=False)
 
         df["mvp"] = df["player_name"].map(lambda p: mvp_counts.get(p, 0))
+        df["min_pg"] = (df["minutes"] / df["games"].replace(0, pd.NA)).round(1)
+        df["pts_pg"] = (df["pts"]     / df["games"].replace(0, pd.NA)).round(1)
 
-        base_cols = {
-            "player_name": "Jugadora",
-            "games": "PJ",
-            "minutes": "MIN",
-            "pts": "PTS",
-            "t2_made": "T2",
-            "t3_made": "T3",
-            "ft_made": "TL",
-            "ft_att": "TLI",
-            "ft_pct": "TL%",
-            "fouls_committed": "FC",
-            "plus_minus": "+/−",
-            "mvp": "MVP",
-        }
-        rating_cols = {
-            "on_net_rating": "NRtg On",
-            "off_net_rating": "NRtg Off",
-            "on_off_diff": "On−Off",
-        }
+        display_df = df.copy()
+        display_df["player_name"] = display_df["player_name"].apply(short_name)
 
-        selected_cols = dict(base_cols)
-        if show_ratings:
-            selected_cols.update(rating_cols)
-
-        cols_present = [c for c in selected_cols if c in df.columns]
-        display_df = df[cols_present].rename(columns=selected_cols)
-        display_df["Jugadora"] = display_df["Jugadora"].apply(short_name)
-
-        st.dataframe(
-            display_df,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "TL%": st.column_config.NumberColumn(format="%.1f%%"),
-                "+/−": st.column_config.NumberColumn(format="%+.0f"),
-                "NRtg On": st.column_config.NumberColumn(format="%+.1f"),
-                "NRtg Off": st.column_config.NumberColumn(format="%+.1f"),
-                "On−Off": st.column_config.NumberColumn(format="%+.1f"),
-                "MVP": st.column_config.NumberColumn(format="%d 🏆", help="Premis MVP aquesta temporada"),
-            },
-        )
-
-        st.caption(
-            "PJ = partits jugats · MIN = minuts jugats · PTS = punts anotats · "
-            "T2/T3 = cistelles de 2/3 anotades · TL/TLI = tirs lliures anotats/intentats · "
-            "TL% = percentatge de tirs lliures · FC = faltes comeses · "
-            "+/− = diferencial de punts mentre és en pista (total, no per 40min) · "
-            "NRtg On/Off = rating net per 40min quan la jugadora és en pista/fora · "
-            "MVP = nombre de premis MVP aquesta temporada"
-        )
+        if not show_ratings:
+            # ---- Absolute + per-game stats ----
+            cols = {
+                "player_name": "Jugadora",
+                "games":       "PJ",
+                "minutes":     "MIN",
+                "min_pg":      "MIN/PJ",
+                "pts":         "PTS",
+                "pts_pg":      "PTS/PJ",
+                "t2_made":     "T2",
+                "t3_made":     "T3",
+                "ft_made":     "TL",
+                "ft_att":      "TLI",
+                "ft_pct":      "TL%",
+                "fouls_committed": "FC",
+                "plus_minus":  "+/−",
+                "mvp":         "MVP",
+            }
+            cols_present = [c for c in cols if c in display_df.columns]
+            out = display_df[cols_present].rename(columns=cols)
+            st.dataframe(
+                out,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "TL%": st.column_config.NumberColumn(format="%.1f%%"),
+                    "+/−": st.column_config.NumberColumn(format="%+.0f"),
+                    "MVP": st.column_config.NumberColumn(
+                        format="%d 🏆", help="Premis MVP aquesta temporada"
+                    ),
+                },
+            )
+            st.caption(
+                "PJ = partits jugats · MIN = minuts totals · MIN/PJ = minuts per partit · "
+                "PTS = punts totals · PTS/PJ = punts per partit · "
+                "T2/T3 = cistelles de 2/3 anotades · TL/TLI = tirs lliures anotats/intentats · "
+                "TL% = % tirs lliures · FC = faltes comeses · "
+                "+/− = diferencial total mentre és en pista · MVP = premis MVP"
+            )
+        else:
+            # ---- Ratings view ----
+            cols = {
+                "player_name":    "Jugadora",
+                "games":          "PJ",
+                "minutes":        "MIN",
+                "on_ortg":        "ORtg",
+                "on_drtg":        "DRtg",
+                "on_net_rating":  "NRtg",
+                "off_net_rating": "NRtg Off",
+                "on_off_diff":    "On−Off",
+            }
+            cols_present = [c for c in cols if c in display_df.columns]
+            out = display_df[cols_present].rename(columns=cols)
+            st.dataframe(
+                out,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "ORtg":    st.column_config.NumberColumn(format="%+.1f"),
+                    "DRtg":    st.column_config.NumberColumn(format="%+.1f"),
+                    "NRtg":    st.column_config.NumberColumn(format="%+.1f"),
+                    "NRtg Off": st.column_config.NumberColumn(format="%+.1f"),
+                    "On−Off":  st.column_config.NumberColumn(format="%+.1f"),
+                },
+            )
+            st.caption(
+                "ORtg = punts anotats per 40min quan la jugadora és en pista · "
+                "DRtg = punts rebuts per 40min quan la jugadora és en pista · "
+                "NRtg = rating net (ORtg − DRtg) quan és en pista · "
+                "NRtg Off = rating net quan la jugadora és fora · "
+                "On−Off = diferència NRtg en pista vs fora (com més alt millor)"
+            )
 
 # ---------------------------------------------------------------------------
 # Tab 2 — Per-game box score
@@ -96,7 +123,6 @@ with tab_game:
     if games_df.empty:
         st.info("Encara no hi ha partits per a aquesta temporada.")
     else:
-        # Build readable game labels
         def _game_label(row) -> str:
             opp = row["away_team"] if row["is_home"] else row["home_team"]
             our  = row["home_score"] if row["is_home"] else row["away_score"]
@@ -155,16 +181,16 @@ with tab_game:
                     "fouls_committed", "plus_minus",
                 ]
                 col_labels = {
-                    "player_name": "Jugadora",
-                    "minutes": "MIN",
-                    "pts": "PTS",
-                    "t2_made": "T2",
-                    "t3_made": "T3",
-                    "ft_made": "TL",
-                    "ft_att": "TLI",
-                    "ft_pct": "TL%",
+                    "player_name":     "Jugadora",
+                    "minutes":         "MIN",
+                    "pts":             "PTS",
+                    "t2_made":         "T2",
+                    "t3_made":         "T3",
+                    "ft_made":         "TL",
+                    "ft_att":          "TLI",
+                    "ft_pct":          "TL%",
                     "fouls_committed": "FC",
-                    "plus_minus": "+/−",
+                    "plus_minus":      "+/−",
                 }
 
                 game_display = cb_box[display_cols].rename(columns=col_labels)
@@ -181,7 +207,7 @@ with tab_game:
 
                 # Team totals row
                 totals = cb_box[["minutes", "pts", "t2_made", "t3_made",
-                                  "ft_made", "ft_att", "fouls_committed", "plus_minus"]].sum()
+                                  "ft_made", "ft_att", "fouls_committed"]].sum()
                 ft_pct_total = (
                     round(totals["ft_made"] / totals["ft_att"] * 100, 1)
                     if totals["ft_att"] > 0 else 0.0

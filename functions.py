@@ -204,20 +204,27 @@ def aggregate_stints(stints: list[Stint]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def on_off_split(stints: list[Stint], player_name: str) -> dict[str, float]:
-    """Net rating per 40min when the player is on vs off the court."""
+    """Ratings per 40min when the player is on vs off the court."""
     on = [s for s in stints if player_name in s.players]
     off = [s for s in stints if player_name not in s.players]
 
-    def _net(group: list[Stint]) -> float:
+    def _ortg(group: list[Stint]) -> float:
         mins = sum(s.duration for s in group)
-        if mins == 0:
-            return 0.0
-        return (sum(s.pts_for for s in group) - sum(s.pts_against for s in group)) / mins * 40
+        return sum(s.pts_for for s in group) / mins * 40 if mins > 0 else 0.0
+
+    def _drtg(group: list[Stint]) -> float:
+        mins = sum(s.duration for s in group)
+        return sum(s.pts_against for s in group) / mins * 40 if mins > 0 else 0.0
+
+    def _net(group: list[Stint]) -> float:
+        return _ortg(group) - _drtg(group)
 
     return {
-        "on_net": round(_net(on), 1),
+        "on_ortg": round(_ortg(on), 1),
+        "on_drtg": round(_drtg(on), 1),
+        "on_net":  round(_net(on),  1),
         "off_net": round(_net(off), 1),
-        "diff": round(_net(on) - _net(off), 1),
+        "diff":    round(_net(on) - _net(off), 1),
     }
 
 

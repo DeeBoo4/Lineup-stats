@@ -180,14 +180,10 @@ def player_season_totals(season_id: int, stints: list[Stint]) -> pd.DataFrame:
         on_off_map[pname] = on_off_split(stints, pname)
 
     agg["plus_minus"] = agg["player_name"].map(plus_minus_map)
-    agg["on_net_rating"] = agg["player_name"].map(
-        lambda p: on_off_map[p]["on_net"]
-    )
-    agg["off_net_rating"] = agg["player_name"].map(
-        lambda p: on_off_map[p]["off_net"]
-    )
-    agg["on_off_diff"] = agg["player_name"].map(
-        lambda p: on_off_map[p]["diff"]
-    )
+    agg["on_ortg"]      = agg["player_name"].map(lambda p: on_off_map[p]["on_ortg"])
+    agg["on_drtg"]      = agg["player_name"].map(lambda p: on_off_map[p]["on_drtg"])
+    agg["on_net_rating"]  = agg["player_name"].map(lambda p: on_off_map[p]["on_net"])
+    agg["off_net_rating"] = agg["player_name"].map(lambda p: on_off_map[p]["off_net"])
+    agg["on_off_diff"]    = agg["player_name"].map(lambda p: on_off_map[p]["diff"])
 
     return agg.sort_values("minutes", ascending=False).reset_index(drop=True)
