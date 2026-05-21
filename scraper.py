@@ -275,28 +275,29 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
                 if pts_ok:
                     return _rows(home_parsed, home_code) + _rows(away_parsed, away_code)
 
-    # ---- Strategy 2 (fallback): cumulative-PTS split ----
+    # ---- Strategy 2 (fallback): best-fit PTS split ----
+    # Instead of greedily accumulating PTS (which fails when cumsum skips past
+    # home_score or when 3 pts are missing due to parsing gaps), try every
+    # possible split point and pick the one that minimises the total point
+    # discrepancy against the known scores.  Among ties, prefer the later split
+    # so that 0-pt home players at the team boundary stay in the home block.
     all_parsed = _parse_section_single(body_clean) or _parse_tirs_multiline(body_clean)
 
-    result: list[BoxScoreRow] = []
-    cumsum = 0
-    on_home = True
-    for row in all_parsed:
-        if on_home:
-            team = home_code
-            cumsum += row['pts']
-            if cumsum >= home_score:
-                on_home = False
-        else:
-            team = away_code
-        result.append(BoxScoreRow(
-            player_name=row['player_name'], team_code=team,
-            pts=row['pts'], minutes=row['minutes'],
-            ft_made=row['ft_made'], ft_att=row['ft_att'],
-            t2_made=row['t2_made'], t3_made=row['t3_made'],
-            fouls_committed=row['fouls_committed'],
-        ))
-    return result
+    if not all_parsed:
+        return []
+
+    best_i = len(all_parsed) - 1
+    best_score_val = float('inf')
+    for i in range(len(all_parsed)):
+        h_pts = sum(r['pts'] for r in all_parsed[:i + 1])
+        a_pts = sum(r['pts'] for r in all_parsed[i + 1:])
+        s = abs(h_pts - home_score) + (abs(a_pts - away_score) if away_score else 0)
+        # Prefer later split on tie so 0-pt boundary players stay in home block
+        if s < best_score_val or (s == best_score_val and i > best_i):
+            best_score_val = s
+            best_i = i
+
+    return _rows(all_parsed[:best_i + 1], home_code) + _rows(all_parsed[best_i + 1:], away_code)
 
 
 def _parse_tirs_multiline(body: str) -> list[dict]:
@@ -734,8 +735,11 @@ def _expand_via_subs(
     cbturo: set[str] = _canonicalise(init_cbturo)
     opp:    set[str] = _canonicalise(init_opp)
 
-    # Group sub events by absolute minute, using canonical TIRS names
-    groups: dict[float, dict[str, list[str]]] = defaultdict(
+    # Group sub events by (absolute minute, team_code) so that substitutions
+    # from different teams at the same dead-ball stoppage are never paired
+    # together.  Without this, a CB Turó sub-out and an opponent sub-in at the
+    # same minute would be mistakenly treated as a CB Turó replacement pair.
+    groups: dict[tuple, dict[str, list[str]]] = defaultdict(
         lambda: {"out": [], "in": []}
     )
     for evt in pbp:
@@ -745,10 +749,11 @@ def _expand_via_subs(
         canon = _canonical_name(raw_name, norm_to_tirs)
         if not canon:
             continue   # not a box-score player
+        key = (evt.abs_minute, evt.team_code)
         if evt.event_type == "sub_out":
-            groups[evt.abs_minute]["out"].append(canon)
+            groups[key]["out"].append(canon)
         elif evt.event_type == "sub_in":
-            groups[evt.abs_minute]["in"].append(canon)
+            groups[key]["in"].append(canon)
 
     changed = True
     while changed:
