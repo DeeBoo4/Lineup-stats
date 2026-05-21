@@ -197,12 +197,16 @@ def _parse_section_single(body: str) -> list[dict]:
     return parsed
 
 
-def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int) -> list[BoxScoreRow]:
+def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int, away_score: int = 0) -> list[BoxScoreRow]:
     """Parse box scores from TIRS tab body text.
 
     Primary strategy: locate the two team-name headers the site prints before
     each team's stats block and use them as section boundaries. This correctly
     handles zero-point players at the team boundary.
+
+    The split is validated by comparing point totals against the known scores,
+    so that early false matches (e.g. team names in breadcrumb navigation) are
+    rejected in favour of the correct stats-section split.
 
     Fallback: cumulative-PTS split (used when team names can't be found).
     """
@@ -261,9 +265,15 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int)
             home_parsed = _parse_section_single(home_section) or _parse_tirs_multiline(home_section)
             away_parsed = _parse_section_single(away_section) or _parse_tirs_multiline(away_section)
 
-            # Accept only when BOTH sections have players.
+            # Accept only when BOTH sections have players AND the PTS totals
+            # match the known scores.  This rejects false splits caused by team
+            # names appearing in navigation / breadcrumbs earlier in the page.
             if home_parsed and away_parsed:
-                return _rows(home_parsed, home_code) + _rows(away_parsed, away_code)
+                h_pts = sum(r['pts'] for r in home_parsed)
+                a_pts = sum(r['pts'] for r in away_parsed)
+                pts_ok = (h_pts == home_score) and (away_score == 0 or a_pts == away_score)
+                if pts_ok:
+                    return _rows(home_parsed, home_code) + _rows(away_parsed, away_code)
 
     # ---- Strategy 2 (fallback): cumulative-PTS split ----
     all_parsed = _parse_section_single(body_clean) or _parse_tirs_multiline(body_clean)
@@ -854,7 +864,7 @@ def scrape_game(url: str) -> ScrapedGame:
             # TIRS tab — box scores
             _click_tab(page, "TIRS")
             tirs_body = page.inner_text("body")
-            box_scores = _parse_tirs_body(tirs_body, home_team, away_team, home_score)
+            box_scores = _parse_tirs_body(tirs_body, home_team, away_team, home_score, away_score)
 
             # Build rosters for team lookup in JUGADES
             home_players = {r.player_name for r in box_scores
