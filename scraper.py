@@ -292,10 +292,15 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
         h_pts = sum(r['pts'] for r in all_parsed[:i + 1])
         a_pts = sum(r['pts'] for r in all_parsed[i + 1:])
         s = abs(h_pts - home_score) + (abs(a_pts - away_score) if away_score else 0)
-        # Prefer later split on tie so 0-pt boundary players stay in home block
-        if s < best_score_val or (s == best_score_val and i > best_i):
+        if s < best_score_val:
             best_score_val = s
             best_i = i
+        elif s == best_score_val and best_score_val > 0:
+            # Non-exact match: prefer later split so 0-pt home boundary
+            # players are included in the home block rather than the away block.
+            best_i = i
+        # Exact match (s == 0): prefer earlier split (keep first match) so
+        # 0-pt away players at the boundary stay in the away block.
 
     return _rows(all_parsed[:best_i + 1], home_code) + _rows(all_parsed[best_i + 1:], away_code)
 
