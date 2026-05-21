@@ -9,8 +9,10 @@ from postProcessing import (
     quarter_scoring,
 )
 from functions import short_name
+from auth import hide_streamlit_ui
 
 st.set_page_config(page_title="Tauler", layout="wide")
+hide_streamlit_ui()
 st.title("Tauler")
 
 season_id = st.session_state.get("season_id")

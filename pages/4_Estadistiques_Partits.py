@@ -3,8 +3,10 @@ import streamlit as st
 from database import list_games, get_box_scores, get_pbp
 from functions import short_name, build_stints
 from config import TEAM_CODE
+from auth import hide_streamlit_ui
 
 st.set_page_config(page_title="Estadístiques Partits", layout="wide")
+hide_streamlit_ui()
 st.title("Estadístiques Partits")
 
 season_id = st.session_state.get("season_id")

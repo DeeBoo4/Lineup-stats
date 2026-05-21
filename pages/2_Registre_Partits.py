@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
-from auth import is_admin
+from auth import is_admin, hide_streamlit_ui
 from database import (
     upsert_game,
     upsert_box_scores,
@@ -19,6 +19,7 @@ from postProcessing import load_season_stints, quarter_scoring, player_season_to
 from config import TEAM_NAME
 
 st.set_page_config(page_title="Registre de Partits", layout="wide")
+hide_streamlit_ui()
 st.title("Registre de Partits")
 
 season_id = st.session_state.get("season_id")

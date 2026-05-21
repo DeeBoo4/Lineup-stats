@@ -4,8 +4,10 @@ import pandas as pd
 from postProcessing import load_season_stints, player_season_totals
 from database import get_season_mvp_counts
 from functions import short_name
+from auth import hide_streamlit_ui
 
 st.set_page_config(page_title="Estadístiques Temporada", layout="wide")
+hide_streamlit_ui()
 st.title("Estadístiques Temporada")
 
 season_id = st.session_state.get("season_id")

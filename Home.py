@@ -1,7 +1,7 @@
 """Entry point for the CB Turó Analytics app."""
 import streamlit as st
 
-from auth import login_form, is_admin
+from auth import login_form, is_admin, hide_streamlit_ui
 from database import list_seasons, upsert_season
 from config import SUPABASE_URL, SUPABASE_KEY
 
@@ -12,6 +12,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+hide_streamlit_ui()
+
 # ---------------------------------------------------------------------------
 # Sidebar — season selector + admin login
 # ---------------------------------------------------------------------------
@@ -19,11 +21,9 @@ with st.sidebar:
     st.title("CB Turó Anàlisi")
     st.caption("Tauler d'anàlisi de bàsquet")
 
-    # Auth
     login_form()
     st.divider()
 
-    # Season selector
     st.subheader("Temporada")
 
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -54,7 +54,6 @@ with st.sidebar:
     else:
         st.info("Encara no hi ha temporades.")
 
-    # Admin: create new season
     if is_admin():
         st.divider()
         st.subheader("Administrador")
@@ -62,7 +61,7 @@ with st.sidebar:
             new_label = st.text_input("Etiqueta de temporada (p.ex. 2025/26)", key="new_season_label")
             if st.button("Crear temporada"):
                 if new_label.strip():
-                    sid = upsert_season(new_label.strip())
+                    upsert_season(new_label.strip())
                     st.success(f"Temporada '{new_label}' creada.")
                     st.rerun()
                 else:
@@ -71,19 +70,20 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Home page content
 # ---------------------------------------------------------------------------
-st.title("CB Turó Anàlisi")
+st.title("CB Turó Anàlisi 🏀")
 
 if not st.session_state.get("season_id"):
     st.markdown(
         """
         Benvinguda al tauler d'anàlisi de bàsquet del CB Turó.
 
-        Utilitza la **barra lateral** per seleccionar una temporada i navega a qualsevol de les quatre pàgines:
+        Utilitza la **barra lateral** per seleccionar una temporada i navega a qualsevol de les cinc pàgines:
 
-        - **Tauler** — valoracions de l'equip i puntuació per quarts
-        - **Registre Partits** — llista de partits i (admin) afegir nous partits
-        - **Estadistiques** — totals i valoracions individuals de la temporada
-        - **Explorador Alineacions** — analitza alineacions específics per selecció de jugadores
+        - **Tauler** — valoració de l'equip i puntuació per quarts
+        - **Registre Partits** — llista de partits i (admin) afegir-ne de nous
+        - **Estadístiques Temporada** — totals i estadístiques individuals de la temporada
+        - **Estadístiques Partits** — estadístiques detallades per partit
+        - **Explorador Alineacions** — analitza i compara alineacions específiques
         """
     )
 else:
@@ -92,9 +92,10 @@ else:
         f"""
         Temporada **{lbl}** seleccionada. Navega amb els enllaços de la barra lateral.
 
-        - **Tauler** — valoracions de l'equip, millors/pitjors alineacions
+        - **Tauler** — valoració de l'equip, millors/pitjors alineacions
         - **Registre Partits** — llista de partits{" · afegir partits" if is_admin() else ""}
-        - **Estadistiques** — totals per jugadora
+        - **Estadístiques Temporada** — totals i estadístiques individuals
+        - **Estadístiques Partits** — estadístiques detallades per partit
         - **Explorador Alineacions** — filtra i compara alineacions
         """
     )

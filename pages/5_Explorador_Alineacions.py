@@ -3,9 +3,11 @@ import pandas as pd
 
 from postProcessing import load_season_stints, team_season_rating, top_bottom_lineups
 from functions import aggregate_stints, stints_for_lineup, short_name
+from auth import hide_streamlit_ui
 
-st.set_page_config(page_title="Explorador de Alineacions", layout="wide")
-st.title("Explorador de Alineacions")
+st.set_page_config(page_title="Explorador d'Alineacions", layout="wide")
+hide_streamlit_ui()
+st.title("Explorador d'Alineacions")
 
 season_id = st.session_state.get("season_id")
 season_label = st.session_state.get("season_label", "—")
@@ -36,7 +38,7 @@ selected_players: list[str] = st.multiselect(
     options=all_players,
     default=[],
     format_func=short_name,
-    help="Només es mostraran les alineacions que incloguin TOTES les jugadores seleccionades.",
+    help="Només es mostraran les alineacions que continguin TOTES les jugadores seleccionades.",
     max_selections=5,
 )
 
