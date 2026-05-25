@@ -1,14 +1,52 @@
-"""Playwright-based scraper for basquetcatala.cat — body-text parsing (no HTML tables)."""
+"""httpx + BeautifulSoup scraper for basquetcatala.cat — no browser required.
+
+Authentication
+--------------
+basquetcatala.cat guards its pages with a reCAPTCHA v3 + signed cookie
+(fcbq_rc).  A real browser solves the challenge automatically and receives
+the cookie.  We reuse that cookie here.
+
+To get the cookie:
+  1. Open Chrome and visit any page on www.basquetcatala.cat.
+  2. Open DevTools (F12) → Application → Storage → Cookies →
+     www.basquetcatala.cat.
+  3. Copy the value of the "fcbq_rc" cookie.
+  4. Paste it into the import form in the app.
+
+The cookie from a successful browser verification typically lasts several
+hours.  Re-copy it whenever the import fails with an "expired cookie" error.
+"""
 from __future__ import annotations
 
 import re
-import time
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
-from playwright.sync_api import sync_playwright, Page, TimeoutError as PWTimeout
+import httpx
+from bs4 import BeautifulSoup, Comment
+
 from config import TEAM_NAME, TEAM_CODE, OPPONENT_CODE
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ca,es;q=0.9,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+_SECURITY_MARKERS = ("/security-check", "Verificació de seguretat", "security-check")
 
 
 # ---------------------------------------------------------------------------
@@ -16,10 +54,6 @@ from config import TEAM_NAME, TEAM_CODE, OPPONENT_CODE
 # ---------------------------------------------------------------------------
 
 def _norm(s: str) -> str:
-    """Strip accents and uppercase for fuzzy team-name comparison.
-
-    "CB Turó A" and "CB TURO A" both normalise to "CB TURO A".
-    """
     return ''.join(
         c for c in unicodedata.normalize('NFKD', s) if ord(c) < 128
     ).upper()
@@ -29,7 +63,6 @@ _TEAM_NAME_NORM = _norm(TEAM_NAME)
 
 
 def _is_cbturo(team_name: str) -> bool:
-    """Return True if *team_name* refers to CB Turó (accent-insensitive)."""
     return _TEAM_NAME_NORM in _norm(team_name)
 
 
@@ -75,40 +108,50 @@ class ScrapedGame:
 
 
 # ---------------------------------------------------------------------------
-# Stealth init script
-# ---------------------------------------------------------------------------
-
-STEALTH_JS = """() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['ca', 'es', 'en-US'] });
-    window.chrome = { runtime: {} };
-}"""
-
-
-# ---------------------------------------------------------------------------
-# Regex for player stat lines in TIRS body text (single-line format)
-# Format: #NUM NAME PTS MIN TL_m/TL_a TL% T2_m/T2_a T2% T3_m/T3_a T3% FC
+# Regex / labels
 # ---------------------------------------------------------------------------
 
 STAT_LINE_RE = re.compile(
     r'^#\d+\s+'
     r'([A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+?)(?=\s+\d+\s+\d+\s+\d+/)'
-    r'\s+(\d+)'           # PTS
-    r'\s+(\d+)'           # MIN
-    r'\s+(\d+)/(\d+)'     # TL made/att
-    r'\s+(?:\d+%|-)'      # TL%
-    r'\s+(\d+)/(\d+)'     # T2 made/att
-    r'\s+(?:\d+%|-)'      # T2%
-    r'\s+(\d+)/(\d+)'     # T3 made/att
-    r'\s+(?:\d+%|-)'      # T3%
-    r'\s+(\d+)',          # FC
+    r'\s+(\d+)'
+    r'\s+(\d+)'
+    r'\s+(\d+)/(\d+)'
+    r'\s+(?:\d+%|-)'
+    r'\s+(\d+)/(\d+)'
+    r'\s+(?:\d+%|-)'
+    r'\s+(\d+)/(\d+)'
+    r'\s+(?:\d+%|-)'
+    r'\s+(\d+)',
     re.UNICODE,
 )
 
-# Stat labels that appear between values in multi-line format
 _STAT_LABELS = {'PTS', 'MIN', 'TL', 'T1', 'T2', 'T3', 'FC', 'FR', 'ASS',
                 'PER', 'REC', 'TAP', 'MAT', 'RO', 'RD', 'RT', 'CA', 'VAL'}
+
+
+# ---------------------------------------------------------------------------
+# HTML → plain text
+# ---------------------------------------------------------------------------
+
+def _html_to_body_text(html: str) -> str:
+    """Convert page HTML to plain text approximating a browser's innerText.
+
+    Unlike a browser's innerText (which omits hidden elements), we extract
+    ALL body text so that tab content hidden by CSS is still accessible.
+    The existing parsers use specific regex/keyword anchors that distinguish
+    RESUM / TIRS / JUGADES sections correctly even when mixed.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Strip non-content tags
+    for tag in soup(["script", "style", "head", "noscript", "svg", "path"]):
+        tag.decompose()
+    for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
+        comment.extract()
+
+    body = soup.find("body") or soup
+    return body.get_text(separator="\n", strip=True)
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +168,10 @@ def _parse_score(s: str) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Body-text parsers
+# Body-text parsers  (identical logic to the Playwright version)
 # ---------------------------------------------------------------------------
 
 def _parse_teams_and_score(body: str) -> tuple[str, str, int, int]:
-    """Extract home team, away team, home score, away score from RESUM body text."""
     lines = [l.strip() for l in body.split('\n')]
     found: list[tuple[int, str]] = []
 
@@ -137,8 +179,8 @@ def _parse_teams_and_score(body: str) -> tuple[str, str, int, int]:
     while i < len(lines) and len(found) < 2:
         if lines[i] == 'P4' and i + 3 < len(lines):
             try:
-                int(lines[i + 1])          # Q4 score (discard)
-                total = int(lines[i + 2])  # total score
+                int(lines[i + 1])
+                total = int(lines[i + 2])
                 name = lines[i + 3].strip()
                 if total >= 20 and re.match(r'^[A-ZÁÀÈÉÍÏÒÓÚÜÇÑ]', name) and len(name) > 3:
                     found.append((total, name))
@@ -154,16 +196,11 @@ def _parse_teams_and_score(body: str) -> tuple[str, str, int, int]:
 
 
 def _parse_mvp(body: str) -> Optional[str]:
-    """Extract MVP player name from RESUM body text.
-    The site labels the MVP with 'MVP', 'Millor jugador/a', or similar.
-    The player name appears on one of the next lines.
-    """
     lines = [l.strip() for l in body.split('\n') if l.strip()]
     _MVP_KEYWORDS = {'mvp', 'millor jugador', 'millor jugadora', 'millor jugador/a'}
 
     for i, line in enumerate(lines):
         if line.lower() in _MVP_KEYWORDS or line.lower().startswith('mvp'):
-            # Scan the next few lines for a capitalised full name
             for j in range(i + 1, min(i + 5, len(lines))):
                 candidate = lines[j]
                 if (
@@ -176,7 +213,6 @@ def _parse_mvp(body: str) -> Optional[str]:
 
 
 def _parse_section_single(body: str) -> list[dict]:
-    """Parse stats using the single-line regex. Returns [] if nothing matched."""
     parsed: list[dict] = []
     seen: set[str] = set()
     for line in body.splitlines():
@@ -197,23 +233,10 @@ def _parse_section_single(body: str) -> list[dict]:
     return parsed
 
 
-def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int, away_score: int = 0) -> list[BoxScoreRow]:
-    """Parse box scores from TIRS tab body text.
-
-    Primary strategy: locate the two team-name headers the site prints before
-    each team's stats block and use them as section boundaries. This correctly
-    handles zero-point players at the team boundary.
-
-    The split is validated by comparing point totals against the known scores,
-    so that early false matches (e.g. team names in breadcrumb navigation) are
-    rejected in favour of the correct stats-section split.
-
-    Fallback: cumulative-PTS split (used when team names can't be found).
-    """
+def _parse_tirs_body(body: str, home_team: str, away_team: str,
+                     home_score: int, away_score: int = 0) -> list[BoxScoreRow]:
     home_is_cbturo = _is_cbturo(home_team)
-
-    # Normalize non-breaking and thin spaces that browsers emit
-    body_clean = re.sub(r'[\xa0   ]', ' ', body)
+    body_clean = re.sub(r'[\xa0  ]', ' ', body)
 
     home_code = TEAM_CODE if home_is_cbturo else OPPONENT_CODE
     away_code = OPPONENT_CODE if home_is_cbturo else TEAM_CODE
@@ -230,10 +253,7 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
             for r in parsed
         ]
 
-    # ---- Strategy 1: split on team-name headers (accent-insensitive, all occurrences) ----
-    # The page often has the team names in breadcrumb/nav as well as the actual
-    # stats section header.  We collect ALL positions and try each combination
-    # until we find one where BOTH sections contain at least one player.
+    # Strategy 1: split on team-name headers
     body_norm = _norm(body_clean)
     home_norm = _norm(home_team)
     away_norm = _norm(away_team)
@@ -265,9 +285,6 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
             home_parsed = _parse_section_single(home_section) or _parse_tirs_multiline(home_section)
             away_parsed = _parse_section_single(away_section) or _parse_tirs_multiline(away_section)
 
-            # Accept only when BOTH sections have players AND the PTS totals
-            # match the known scores.  This rejects false splits caused by team
-            # names appearing in navigation / breadcrumbs earlier in the page.
             if home_parsed and away_parsed:
                 h_pts = sum(r['pts'] for r in home_parsed)
                 a_pts = sum(r['pts'] for r in away_parsed)
@@ -275,12 +292,7 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
                 if pts_ok:
                     return _rows(home_parsed, home_code) + _rows(away_parsed, away_code)
 
-    # ---- Strategy 2 (fallback): best-fit PTS split ----
-    # Instead of greedily accumulating PTS (which fails when cumsum skips past
-    # home_score or when 3 pts are missing due to parsing gaps), try every
-    # possible split point and pick the one that minimises the total point
-    # discrepancy against the known scores.  Among ties, prefer the later split
-    # so that 0-pt home players at the team boundary stay in the home block.
+    # Strategy 2: best-fit PTS split
     all_parsed = _parse_section_single(body_clean) or _parse_tirs_multiline(body_clean)
 
     if not all_parsed:
@@ -296,21 +308,12 @@ def _parse_tirs_body(body: str, home_team: str, away_team: str, home_score: int,
             best_score_val = s
             best_i = i
         elif s == best_score_val and best_score_val > 0:
-            # Non-exact match: prefer later split so 0-pt home boundary
-            # players are included in the home block rather than the away block.
             best_i = i
-        # Exact match (s == 0): prefer earlier split (keep first match) so
-        # 0-pt away players at the boundary stay in the away block.
 
     return _rows(all_parsed[:best_i + 1], home_code) + _rows(all_parsed[best_i + 1:], away_code)
 
 
 def _parse_tirs_multiline(body: str) -> list[dict]:
-    """
-    Parse TIRS stats when each value is on its own line.
-    Expected token order per player: PTS, MIN, TL_frac, TL%, T2_frac, T2%, T3_frac, T3%, FC
-    Labels (PTS / MIN / TL / T2 / T3 / FC) may appear interleaved and are ignored.
-    """
     lines = [l.strip() for l in body.split('\n') if l.strip()]
     result: list[dict] = []
     seen: set[str] = set()
@@ -322,21 +325,19 @@ def _parse_tirs_multiline(body: str) -> list[dict]:
     while i < len(lines):
         line = lines[i]
 
-        # Stop at page footer
         if any(b in line for b in SECTION_BREAKS):
             i += 1
             continue
 
-        # --- Detect player entry: "#NUM" alone OR "#NUM NAME" combined ---
         jersey_solo = re.match(r'^#(\d+)$', line)
-        jersey_with_name = re.match(r'^#\d+\s+([A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+)$', line, re.UNICODE)
+        jersey_with_name = re.match(r'^#\d+\s+([A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+)$',
+                                    line, re.UNICODE)
 
         if jersey_with_name:
             name = jersey_with_name.group(1).strip()
             token_start = i + 1
         elif jersey_solo and i + 1 < len(lines):
             name_line = lines[i + 1]
-            # Verify it looks like a name (all caps, not a label or number)
             if (re.match(r'^[A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+$', name_line, re.UNICODE)
                     and name_line not in _STAT_LABELS):
                 name = name_line.strip()
@@ -352,24 +353,21 @@ def _parse_tirs_multiline(body: str) -> list[dict]:
             i += 1
             continue
 
-        # --- Collect tokens after the name ---
         j = token_start
-        # Skip optional position letter (single alpha char)
         if j < len(lines) and len(lines[j]) == 1 and lines[j].isalpha():
             j += 1
 
         raw_tokens: list[str] = []
         while j < len(lines) and len(raw_tokens) < 20:
             t = lines[j]
-            if re.match(r'^#\d+', t):   # next player
+            if re.match(r'^#\d+', t):
                 break
             if any(b in t for b in SECTION_BREAKS):
                 break
             raw_tokens.append(t)
             j += 1
 
-        # --- Parse tokens: drop labels, collect ints/fracs/pcts ---
-        values: list[tuple] = []   # ('int', n) or ('frac', made, att) or ('pct', p)
+        values: list[tuple] = []
         for t in raw_tokens:
             if t in _STAT_LABELS:
                 continue
@@ -381,9 +379,6 @@ def _parse_tirs_multiline(body: str) -> list[dict]:
             elif re.match(r'^\d+$', t):
                 values.append(('int', int(t)))
 
-        # --- Extract stats in expected order ---
-        # Order: PTS(int), MIN(int), TL(frac), TL%(pct), T2(frac), T2%(pct),
-        #         T3(frac), T3%(pct), FC(int)
         row = _extract_player_stats(name, values)
         if row:
             seen.add(name)
@@ -395,7 +390,6 @@ def _parse_tirs_multiline(body: str) -> list[dict]:
 
 
 def _extract_player_stats(name: str, values: list[tuple]) -> Optional[dict]:
-    """Convert ordered token list to a player stat dict."""
     ints = [v for v in values if v[0] == 'int']
     fracs = [v for v in values if v[0] == 'frac']
 
@@ -410,8 +404,6 @@ def _extract_player_stats(name: str, values: list[tuple]) -> Optional[dict]:
     t2_made = fracs[1][1] if len(fracs) > 1 else 0
     t3_made = fracs[2][1] if len(fracs) > 2 else 0
 
-    # FC is the last integer after the fracs section
-    # Find last int that appears after the 3rd fraction in original sequence
     fc = ints[-1][1] if len(ints) >= 3 else 0
 
     return {
@@ -465,21 +457,19 @@ def _parse_jugades_body(
     home_players: set[str],
     away_players: set[str],
 ) -> list[PBPEvent]:
-    """Parse play-by-play events from JUGADES tab body text."""
     home_is_cbturo = _is_cbturo(home_team)
     lines = [l.strip() for l in body.split('\n')]
 
     events: list[PBPEvent] = []
     in_section = False
 
-    # State
     cur_player: Optional[str] = None
     cur_etype: Optional[str] = None
     cur_pts: int = 0
     cur_min: Optional[int] = None
     cur_period: Optional[int] = None
     cur_score: Optional[str] = None
-    waiting: Optional[str] = None  # 'minute' | 'period' | 'score'
+    waiting: Optional[str] = None
 
     SKIP_EVENTS = {'salt guanyat', 'salt perdut'}
 
@@ -508,7 +498,6 @@ def _parse_jugades_body(
         if not line:
             continue
 
-        # Detect section start/end
         if 'cronologia del partit' in line.lower():
             in_section = True
             continue
@@ -517,7 +506,6 @@ def _parse_jugades_body(
         if not in_section:
             continue
 
-        # --- Waiting for a value ---
         if waiting == 'minute':
             try:
                 cur_min = int(line)
@@ -545,7 +533,6 @@ def _parse_jugades_body(
                 emit()
             continue
 
-        # --- Label lines ---
         if line == 'Min:' or line.startswith('Min: '):
             val = line[4:].strip()
             if val.isdigit():
@@ -571,27 +558,22 @@ def _parse_jugades_body(
                 waiting = 'score'
             continue
 
-        # --- Skip single-letter initials ---
         if len(line) == 1 and line.isalpha():
             continue
 
-        # --- Skip known non-events ---
         if any(s in line.lower() for s in SKIP_EVENTS):
             continue
 
-        # --- Player line (#NUM NAME) ---
         pm = re.match(r'^#\d+\s+([A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+)$', line, re.UNICODE)
         if pm:
             cur_player = pm.group(1).strip()
             continue
 
-        # --- Team name as entity (for timeouts etc.) ---
         if re.match(r'^[A-ZÁÀÈÉÍÏÒÓÚÜÇÑ][A-ZÁÀÈÉÍÏÒÓÚÜÇÑ\s]+$', line, re.UNICODE) and len(line) > 4:
             if any(k in line.upper() for k in ['CB ', 'CLUB ', 'BÀSQUET', 'BASQUET', 'CAMPING', 'BIANYA', 'TURO']):
                 cur_player = line
                 continue
 
-        # --- Event line ---
         etype, pts = _classify_event(line)
         if etype != 'unknown':
             cur_etype = etype
@@ -601,87 +583,7 @@ def _parse_jugades_body(
 
 
 # ---------------------------------------------------------------------------
-# Browser setup
-# ---------------------------------------------------------------------------
-
-def _make_browser_context(playwright):
-    try:
-        browser = playwright.chromium.launch(
-            channel="chrome",
-            headless=False,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-    except Exception:
-        browser = playwright.chromium.launch(
-            headless=False,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
-    ctx = browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": 1366, "height": 768},
-        locale="ca-ES",
-        timezone_id="Europe/Madrid",
-    )
-    ctx.add_init_script(STEALTH_JS)
-    return browser, ctx
-
-
-def _dismiss_overlays(page: Page):
-    for sel in ["text=Acceptar", "text=Accept", "text=D'acord",
-                "#onetrust-accept-btn-handler", "[class*='accept']"]:
-        try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=1500):
-                el.click()
-                time.sleep(0.8)
-                return
-        except Exception:
-            pass
-
-
-def _wait_for_real_page(page: Page, timeout_s: int = 180):
-    """Block until reCAPTCHA clears or timeout.
-
-    Detects the captcha page by title keywords, then waits until the title
-    changes AND the body has enough content to be a real game page.
-    """
-    _CAPTCHA_KEYS = ("Verificació", "Verifica", "reCAPTCHA", "Robot", "robot")
-
-    for _ in range(timeout_s):
-        title = page.title()
-        on_captcha = any(k in title for k in _CAPTCHA_KEYS)
-        if not on_captcha:
-            # Make sure it's not a blank/loading page either
-            try:
-                if len(page.inner_text("body")) > 300:
-                    return
-            except Exception:
-                pass
-        time.sleep(1)
-
-    raise RuntimeError(
-        "La pàgina de protecció anti-bot no s'ha tancat després de resoldre el captcha. "
-        "Torna-ho a provar d'aquí a uns minuts."
-    )
-
-
-def _click_tab(page: Page, label: str):
-    for sel in [f"text={label}", f"a:has-text('{label}')", f"[role='tab']:has-text('{label}')"]:
-        try:
-            el = page.locator(sel).first
-            if el.count() > 0:
-                el.click(timeout=4000)
-                time.sleep(2)
-                return
-        except Exception:
-            continue
-
-
-# ---------------------------------------------------------------------------
-# PBP-based box score correction
+# PBP-based box score correction  (identical to Playwright version)
 # ---------------------------------------------------------------------------
 
 def _replace_code(row: BoxScoreRow, code: str) -> BoxScoreRow:
@@ -695,11 +597,6 @@ def _replace_code(row: BoxScoreRow, code: str) -> BoxScoreRow:
 
 
 def _canonical_name(pbp_name: str, norm_to_tirs: dict[str, str]) -> Optional[str]:
-    """Resolve a PBP player name to its canonical TIRS spelling.
-
-    Tries exact match first, then accent-insensitive match.  Returns None if
-    the name doesn't correspond to any box-score player.
-    """
     if pbp_name in norm_to_tirs.values():
         return pbp_name
     return norm_to_tirs.get(_norm(pbp_name))
@@ -711,24 +608,10 @@ def _expand_via_subs(
     init_opp: set[str],
     all_names: set[str],
 ) -> tuple[set[str], set[str]]:
-    """
-    Expand team membership for 0-pt players using substitution pairing.
-
-    Principle: when N confirmed CB Turó players sub OUT at a given minute
-    and exactly N unidentified players sub IN at that same minute, those
-    N players must be CB Turó replacements (and vice-versa for opponents).
-    We iterate until no new identifications can be made.
-
-    All player names are normalised to their canonical TIRS spelling so that
-    minor accent differences between the TIRS and JUGADES tabs don't cause
-    players to be silently dropped.
-    """
     from collections import defaultdict
 
-    # Build accent-insensitive lookup: normalised name → canonical TIRS name
     norm_to_tirs: dict[str, str] = {_norm(n): n for n in all_names}
 
-    # Normalise the initial scorer sets to canonical TIRS spellings
     def _canonicalise(names: set[str]) -> set[str]:
         result: set[str] = set()
         for n in names:
@@ -740,10 +623,6 @@ def _expand_via_subs(
     cbturo: set[str] = _canonicalise(init_cbturo)
     opp:    set[str] = _canonicalise(init_opp)
 
-    # Group sub events by (absolute minute, team_code) so that substitutions
-    # from different teams at the same dead-ball stoppage are never paired
-    # together.  Without this, a CB Turó sub-out and an opponent sub-in at the
-    # same minute would be mistakenly treated as a CB Turó replacement pair.
     groups: dict[tuple, dict[str, list[str]]] = defaultdict(
         lambda: {"out": [], "in": []}
     )
@@ -753,7 +632,7 @@ def _expand_via_subs(
             continue
         canon = _canonical_name(raw_name, norm_to_tirs)
         if not canon:
-            continue   # not a box-score player
+            continue
         key = (evt.abs_minute, evt.team_code)
         if evt.event_type == "sub_out":
             groups[key]["out"].append(canon)
@@ -768,7 +647,7 @@ def _expand_via_subs(
             for my_set, other_set in [(cbturo, opp), (opp, cbturo)]:
                 n_my_out  = sum(1 for p in g["out"] if p in my_set)
                 n_my_in   = sum(1 for p in g["in"]  if p in my_set)
-                n_needed  = n_my_out - n_my_in   # how many new same-team sub-ins
+                n_needed  = n_my_out - n_my_in
                 candidates = [
                     p for p in g["in"]
                     if p not in my_set and p not in other_set
@@ -786,39 +665,17 @@ def _reclassify_with_pbp(
     pbp: list[PBPEvent],
     home_is_cbturo: bool,
 ) -> list[BoxScoreRow]:
-    """
-    Correct team-code assignments using PBP data alone (no TIRS heuristics).
-
-    Two passes:
-    1. *Scorers*: walk basket events; when home_score rises the scorer is on
-       the home team, when away_score rises they are on the away team.
-       This is entirely objective — no team-code assumptions needed.
-    2. *0-pt players*: use substitution pairing.  When N confirmed CB Turó
-       players sub OUT at a given minute and exactly N unidentified players
-       sub IN, those players are CB Turó (and symmetrically for opponents).
-       Iterates until stable.
-
-    Players not identified by either pass keep the code already assigned by
-    _parse_tirs_body (Strategy 1 section split).
-
-    All name comparisons are accent-insensitive so that minor spelling
-    differences between the TIRS and JUGADES tabs don't cause mis-classification.
-    """
     if not pbp:
         return box_scores
 
-    # Accent-insensitive lookup for the final application step
     all_names = {r.player_name for r in box_scores}
     norm_to_tirs: dict[str, str] = {_norm(n): n for n in all_names}
 
     def _resolve(pbp_name: str) -> Optional[str]:
-        """Map a PBP name to its canonical TIRS name (accent-insensitive)."""
         if pbp_name in all_names:
             return pbp_name
         return norm_to_tirs.get(_norm(pbp_name))
 
-    # ---- Pass 1: scorers from score deltas ----
-    # Use canonical TIRS names so the sets are directly comparable with box_scores.
     home_scorers: set[str] = set()
     away_scorers: set[str] = set()
     prev_h = prev_a = 0
@@ -838,10 +695,8 @@ def _reclassify_with_pbp(
     cbturo_scorers = home_scorers if home_is_cbturo else away_scorers
     opp_scorers    = away_scorers if home_is_cbturo else home_scorers
 
-    # ---- Pass 2: expand via substitution pairing ----
     cbturo_all, opp_all = _expand_via_subs(pbp, cbturo_scorers, opp_scorers, all_names)
 
-    # ---- Apply: only override players we identified; rest keep original code ----
     result = list(box_scores)
     for i, r in enumerate(box_scores):
         if r.player_name in cbturo_all:
@@ -853,61 +708,90 @@ def _reclassify_with_pbp(
 
 
 # ---------------------------------------------------------------------------
+# HTTP fetch helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_game_html(url: str, session_cookie: str) -> str:
+    """GET the game page HTML using the provided session cookie.
+
+    Raises RuntimeError if the cookie is expired / invalid (server redirects
+    to /security-check) or if any other HTTP error occurs.
+    """
+    with httpx.Client(
+        headers=_BROWSER_HEADERS,
+        follow_redirects=True,
+        timeout=30.0,
+    ) as client:
+        resp = client.get(url, cookies={"fcbq_rc": session_cookie})
+
+    # Detect reCAPTCHA / security-check redirect
+    final_url = str(resp.url)
+    if any(marker in final_url for marker in _SECURITY_MARKERS):
+        raise RuntimeError(
+            "La cookie de sessió ha expirat o no és vàlida.\n"
+            "Visita www.basquetcatala.cat al teu navegador, obre DevTools (F12) "
+            "→ Application → Cookies → www.basquetcatala.cat, "
+            "copia el valor de 'fcbq_rc' i enganxa'l al formulari."
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code} en intentar accedir a {url}")
+
+    # A quick sanity-check: does the HTML contain any basketball content?
+    if "cronologia" not in resp.text.lower() and "#" not in resp.text:
+        # Page might be the verification shell even without a redirect
+        if any(marker in resp.text for marker in ("Verificació de seguretat", "security-check")):
+            raise RuntimeError(
+                "La cookie de sessió ha expirat. Torna a copiar-la del navegador."
+            )
+
+    return resp.text
+
+
+# ---------------------------------------------------------------------------
 # Public entrypoint
 # ---------------------------------------------------------------------------
 
-def scrape_game(url: str) -> ScrapedGame:
-    with sync_playwright() as p:
-        browser, ctx = _make_browser_context(p)
-        page = ctx.new_page()
-        try:
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            _wait_for_real_page(page)
-            time.sleep(1)
-            _dismiss_overlays(page)
+def scrape_game(url: str, session_cookie: str) -> ScrapedGame:
+    """Scrape a basquetcatala.cat game page and return structured data.
 
-            # Team names + scores + MVP from RESUM (current tab)
-            resum_body = page.inner_text("body")
-            home_team, away_team, home_score, away_score = _parse_teams_and_score(resum_body)
-            mvp_player_name = _parse_mvp(resum_body)
+    Parameters
+    ----------
+    url:            Full URL of the game stats page.
+    session_cookie: Value of the ``fcbq_rc`` browser cookie.  Obtain it by
+                    visiting any page on www.basquetcatala.cat in Chrome,
+                    then DevTools → Application → Cookies → fcbq_rc.
+    """
+    html = _fetch_game_html(url, session_cookie)
+    body_text = _html_to_body_text(html)
 
-            # TIRS tab — box scores
-            _click_tab(page, "TIRS")
-            tirs_body = page.inner_text("body")
-            box_scores = _parse_tirs_body(tirs_body, home_team, away_team, home_score, away_score)
+    home_team, away_team, home_score, away_score = _parse_teams_and_score(body_text)
+    mvp_player_name = _parse_mvp(body_text)
 
-            # Build rosters for team lookup in JUGADES
-            home_players = {r.player_name for r in box_scores
-                            if r.team_code == (TEAM_CODE if _is_cbturo(home_team) else OPPONENT_CODE)}
-            away_players = {r.player_name for r in box_scores
-                            if r.team_code != (TEAM_CODE if _is_cbturo(home_team) else OPPONENT_CODE)}
+    box_scores = _parse_tirs_body(body_text, home_team, away_team, home_score, away_score)
 
-            # JUGADES tab — play-by-play
-            _click_tab(page, "JUGADES")
-            jugades_body = page.inner_text("body")
-            pbp = _parse_jugades_body(jugades_body, home_team, home_players, away_players)
+    home_is_cbturo = _is_cbturo(home_team)
+    home_players = {r.player_name for r in box_scores
+                    if r.team_code == (TEAM_CODE if home_is_cbturo else OPPONENT_CODE)}
+    away_players = {r.player_name for r in box_scores
+                    if r.team_code != (TEAM_CODE if home_is_cbturo else OPPONENT_CODE)}
 
-            # Final score: use last PBP score if available
-            if pbp:
-                last = pbp[-1]
-                if last.home_score or last.away_score:
-                    home_score = last.home_score
-                    away_score = last.away_score
+    pbp = _parse_jugades_body(body_text, home_team, home_players, away_players)
 
-            # Correct team assignments using PBP score deltas.
-            # This fixes 0-pt boundary players (e.g. Julia Riu / Nerea Benitez)
-            # that cumulative-PTS splitting mis-classifies.
-            home_is_cbturo = _is_cbturo(home_team)
-            box_scores = _reclassify_with_pbp(box_scores, pbp, home_is_cbturo)
+    if pbp:
+        last = pbp[-1]
+        if last.home_score or last.away_score:
+            home_score = last.home_score
+            away_score = last.away_score
 
-            return ScrapedGame(
-                home_team=home_team,
-                away_team=away_team,
-                home_score=home_score,
-                away_score=away_score,
-                box_scores=box_scores,
-                pbp=pbp,
-                mvp_player_name=mvp_player_name,
-            )
-        finally:
-            browser.close()
+    box_scores = _reclassify_with_pbp(box_scores, pbp, home_is_cbturo)
+
+    return ScrapedGame(
+        home_team=home_team,
+        away_team=away_team,
+        home_score=home_score,
+        away_score=away_score,
+        box_scores=box_scores,
+        pbp=pbp,
+        mvp_player_name=mvp_player_name,
+    )

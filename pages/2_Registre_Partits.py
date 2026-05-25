@@ -123,33 +123,51 @@ if not is_admin():
 # ---------------------------------------------------------------------------
 st.subheader("Afegir un nou partit")
 
-try:
-    from scraper import scrape_game, _is_cbturo
-    SCRAPER_AVAILABLE = True
-except ImportError:
-    SCRAPER_AVAILABLE = False
+from scraper import scrape_game, _is_cbturo
 
 tab_url, tab_manual = st.tabs(["Importar per URL", "Entrada manual"])
 
 # ---- URL scraper ----
 with tab_url:
-    if not SCRAPER_AVAILABLE:
-        st.info(
-            "La importació per URL no està disponible en aquesta versió desplegada al núvol. "
-            "Importa els partits des del teu ordinador local i les dades es sincronitzaran automàticament."
+    # -- Session cookie --
+    with st.expander("🔑 Cookie de sessió (necessària per importar)", expanded="fcbq_cookie" not in st.session_state):
+        st.markdown(
+            """
+**Com obtenir la cookie:**
+1. Obre Chrome i visita qualsevol pàgina de **www.basquetcatala.cat** (per exemple, la URL del partit que vols importar).
+2. Obre DevTools amb **F12** → pestanya **Application** → **Storage** → **Cookies** → `www.basquetcatala.cat`.
+3. Cerca la cookie **`fcbq_rc`** i copia el seu valor.
+4. Enganxa'l aquí a continuació.
+
+*La cookie caduca cada pocs dies. Torna a copiar-la si la importació falla amb un error de cookie.*
+            """
         )
-    else:
-        url_input = st.text_input(
-            "URL del partit",
-            placeholder="https://www.basquetcatala.cat/estadistiques/2025/12345",
+        cookie_input = st.text_area(
+            "Valor de la cookie `fcbq_rc`",
+            value=st.session_state.get("fcbq_cookie", ""),
+            height=80,
+            placeholder="eyJzdGF0dXMiOiJ...",
+            key="cookie_input_field",
         )
-        if st.button("Importar i desar", key="scrape_btn"):
-            if not url_input.strip():
-                st.error("Introdueix una URL.")
-            else:
-                with st.spinner("S'obrirà una finestra del navegador. Accepta les cookies i resol el captcha si apareix. Pot trigar fins a 3 minuts…"):
-                    try:
-                        game_data = scrape_game(url_input.strip())
+        if st.button("Desar cookie", key="save_cookie_btn"):
+            st.session_state["fcbq_cookie"] = cookie_input.strip()
+            st.success("Cookie desada per a aquesta sessió.")
+
+    session_cookie = st.session_state.get("fcbq_cookie", "").strip()
+
+    url_input = st.text_input(
+        "URL del partit",
+        placeholder="https://www.basquetcatala.cat/estadistiques/2025/12345",
+    )
+    if st.button("Importar i desar", key="scrape_btn"):
+        if not url_input.strip():
+            st.error("Introdueix una URL.")
+        elif not session_cookie:
+            st.error("Cal introduir la cookie de sessió abans d'importar. Desplega la secció '🔑 Cookie de sessió' a dalt.")
+        else:
+            with st.spinner("Descarregant i processant el partit…"):
+                try:
+                    game_data = scrape_game(url_input.strip(), session_cookie=session_cookie)
 
                         game_date_guess = date.today()
                         slabel = make_season_label(game_date_guess)
