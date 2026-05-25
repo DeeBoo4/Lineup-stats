@@ -14,7 +14,7 @@ from database import (
     get_box_scores,
     season_label as make_season_label,
 )
-from functions import build_stints, _lineup_key
+from functions import build_stints, _lineup_key, short_name
 from postProcessing import load_season_stints, quarter_scoring, player_season_totals
 from config import TEAM_NAME
 
@@ -43,7 +43,10 @@ if not games_df.empty:
         lambda r: f"{r['Punts Local']} – {r['Punts Visitant']}", axis=1
     )
     mvp_col = games_df["mvp_player_name"] if "mvp_player_name" in games_df.columns else None
-    display_df["MVP"] = mvp_col.fillna("—") if mvp_col is not None else "—"
+    display_df["MVP"] = (
+        mvp_col.apply(lambda x: short_name(x) if pd.notna(x) and x else "—")
+        if mvp_col is not None else "—"
+    )
 
     # Determine win/loss for each row
     is_win = games_df.apply(

@@ -250,23 +250,23 @@ def stints_for_lineup(stints: list[Stint], players: list[str]) -> list[Stint]:
 # Custom display-name overrides, keyed by the first two words of the stored
 # name (uppercased, with or without accent variants).
 _NAME_OVERRIDES: dict[str, str] = {
-    "JORDANA DOMÈNECH": "Dana",
-    "JORDANA DOMENECH": "Dana",   # accent-stripped fallback
-    "AINA MARTINEZ":    "Aina M.",
-    "AINA MARTÍNEZ":    "Aina M.",
-    "AINA VERD":        "Aina V.",
+    "JORDANA DOMÈNECH": "DANA",
+    "JORDANA DOMENECH": "DANA",   # accent-stripped fallback
+    "AINA MARTINEZ":    "AINA M.",
+    "AINA MARTÍNEZ":    "AINA M.",
+    "AINA VERD":        "AINA V.",
 }
 
 
 def short_name(full_name: str) -> str:
-    """Return display name: custom override if defined, else first-name + first-surname.
+    """Return display name in ALL CAPS: custom override if defined, else first-name + first-surname.
 
     Custom overrides (matched on the first two words, case-insensitive):
-        "JORDANA DOMÈNECH ..."  → "Dana"
-        "AINA MARTINEZ ..."     → "Aina M."
-        "AINA VERD ..."         → "Aina V."
+        "JORDANA DOMÈNECH ..."  → "DANA"
+        "AINA MARTINEZ ..."     → "AINA M."
+        "AINA VERD ..."         → "AINA V."
 
-    General rule (first two space-separated words):
+    General rule (first two space-separated words, all caps):
         "ALEXIA REIXACH FONT"  → "ALEXIA REIXACH"
         "NEREA BENITEZ"        → "NEREA BENITEZ"
         "MARIA JOSE GARCIA"    → "MARIA JOSE"
@@ -275,4 +275,4 @@ def short_name(full_name: str) -> str:
     first_two = " ".join(parts[:2]).upper() if len(parts) >= 2 else full_name.strip().upper()
     if first_two in _NAME_OVERRIDES:
         return _NAME_OVERRIDES[first_two]
-    return " ".join(parts[:2]) if len(parts) >= 2 else full_name
+    return first_two if len(parts) >= 2 else full_name.upper()
