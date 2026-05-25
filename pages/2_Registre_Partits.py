@@ -123,157 +123,128 @@ if not is_admin():
 # ---------------------------------------------------------------------------
 st.subheader("Afegir un nou partit")
 
-from scraper import scrape_game, _is_cbturo
+try:
+    from scraper import scrape_game, _is_cbturo
+    SCRAPER_AVAILABLE = True
+except ImportError:
+    SCRAPER_AVAILABLE = False
 
 tab_url, tab_manual = st.tabs(["Importar per URL", "Entrada manual"])
 
 # ---- URL scraper ----
 with tab_url:
-    # -- Session cookie --
-    with st.expander("🔑 Cookie de sessió (necessària per importar)", expanded="fcbq_cookie" not in st.session_state):
-        st.markdown(
-            """
-**Com obtenir la cookie:**
-1. Obre Chrome i visita qualsevol pàgina de **www.basquetcatala.cat** (per exemple, la URL del partit que vols importar).
-2. Obre DevTools amb **F12** → pestanya **Application** → **Storage** → **Cookies** → `www.basquetcatala.cat`.
-3. Cerca la cookie **`fcbq_rc`** i copia el seu valor.
-4. Enganxa'l aquí a continuació.
-
-*La cookie caduca cada pocs dies. Torna a copiar-la si la importació falla amb un error de cookie.*
-            """
+    if not SCRAPER_AVAILABLE:
+        st.info(
+            "La importació per URL no està disponible en aquesta versió desplegada al núvol. "
+            "Importa els partits des del teu ordinador local i les dades es sincronitzaran automàticament."
         )
-        cookie_input = st.text_area(
-            "Valor de la cookie `fcbq_rc`",
-            value=st.session_state.get("fcbq_cookie", ""),
-            height=80,
-            placeholder="eyJzdGF0dXMiOiJ...",
-            key="cookie_input_field",
+    else:
+        url_input = st.text_input(
+            "URL del partit",
+            placeholder="https://www.basquetcatala.cat/estadistiques/2025/12345",
         )
-        if st.button("Desar cookie", key="save_cookie_btn"):
-            st.session_state["fcbq_cookie"] = cookie_input.strip()
-            st.success("Cookie desada per a aquesta sessió.")
+        if st.button("Importar i desar", key="scrape_btn"):
+            if not url_input.strip():
+                st.error("Introdueix una URL.")
+            else:
+                with st.spinner("S'obrirà una finestra del navegador. Accepta les cookies i resol el captcha si apareix. Pot trigar fins a 3 minuts…"):
+                    try:
+                        game_data = scrape_game(url_input.strip())
 
-    session_cookie = st.session_state.get("fcbq_cookie", "").strip()
+                        game_date_guess = date.today()
+                        slabel = make_season_label(game_date_guess)
+                        is_home = _is_cbturo(game_data.home_team)
 
-    url_input = st.text_input(
-        "URL del partit",
-        placeholder="https://www.basquetcatala.cat/estadistiques/2025/12345",
-    )
-    if st.button("Importar i desar", key="scrape_btn"):
-        if not url_input.strip():
-            st.error("Introdueix una URL.")
-        elif not session_cookie:
-            st.error("Cal introduir la cookie de sessió abans d'importar. Desplega la secció '🔑 Cookie de sessió' a dalt.")
-        else:
-            with st.spinner("Descarregant i processant el partit…"):
-                try:
-                    import httpx as _httpx
-                    from bs4 import BeautifulSoup as _BS
-                    _hdrs = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                        "Accept-Language": "ca,es;q=0.9,en;q=0.7",
-                    }
-                    _resp = _httpx.get(url_input.strip(), headers=_hdrs, cookies={"fcbq_rc": session_cookie}, follow_redirects=True, timeout=30)
-                    _preview = _BS(_resp.text, "html.parser").get_text("\n", strip=True)[:1500]
-                    with st.expander("🔍 Diagnòstic — primers 1500 caràcters del contingut rebut"):
-                        st.text(f"URL final: {_resp.url}\nHTTP: {_resp.status_code}\n\n{_preview}")
+                        gid = upsert_game(
+                            season_id=season_id,
+                            game_url=url_input.strip(),
+                            game_date=game_date_guess,
+                            home_team=game_data.home_team,
+                            away_team=game_data.away_team,
+                            home_score=game_data.home_score,
+                            away_score=game_data.away_score,
+                            is_home=is_home,
+                            mvp_player_name=game_data.mvp_player_name,
+                        )
 
-                    game_data = scrape_game(url_input.strip(), session_cookie=session_cookie)
+                        box_rows = [
+                            {
+                                "player_name": r.player_name,
+                                "team_code": r.team_code,
+                                "pts": r.pts,
+                                "minutes": r.minutes,
+                                "t2_made": r.t2_made,
+                                "t3_made": r.t3_made,
+                                "ft_made": r.ft_made,
+                                "ft_att": r.ft_att,
+                                "fouls_committed": r.fouls_committed,
+                            }
+                            for r in game_data.box_scores
+                        ]
+                        upsert_box_scores(gid, box_rows)
 
-                    game_date_guess = date.today()
-                    slabel = make_season_label(game_date_guess)
-                    is_home = _is_cbturo(game_data.home_team)
+                        pbp_rows = [
+                            {
+                                "period": e.period,
+                                "minute_in_period": e.minute_in_period,
+                                "abs_minute": e.abs_minute,
+                                "event_type": e.event_type,
+                                "player_name": e.player_name,
+                                "team_code": e.team_code,
+                                "points": e.points,
+                                "home_score": e.home_score,
+                                "away_score": e.away_score,
+                            }
+                            for e in game_data.pbp
+                        ]
+                        upsert_pbp(gid, pbp_rows)
 
-                    gid = upsert_game(
-                        season_id=season_id,
-                        game_url=url_input.strip(),
-                        game_date=game_date_guess,
-                        home_team=game_data.home_team,
-                        away_team=game_data.away_team,
-                        home_score=game_data.home_score,
-                        away_score=game_data.away_score,
-                        is_home=is_home,
-                        mvp_player_name=game_data.mvp_player_name,
-                    )
+                        # Build and save lineups/stints
+                        import pandas as pd
+                        pbp_df = pd.DataFrame(pbp_rows)
+                        box_df = pd.DataFrame(box_rows)
+                        stints = build_stints(pbp_df, box_df)
 
-                    box_rows = [
-                        {
-                            "player_name": r.player_name,
-                            "team_code": r.team_code,
-                            "pts": r.pts,
-                            "minutes": r.minutes,
-                            "t2_made": r.t2_made,
-                            "t3_made": r.t3_made,
-                            "ft_made": r.ft_made,
-                            "ft_att": r.ft_att,
-                            "fouls_committed": r.fouls_committed,
-                        }
-                        for r in game_data.box_scores
-                    ]
-                    upsert_box_scores(gid, box_rows)
+                        from collections import defaultdict
+                        lineup_rows = []
+                        seen_keys: set[str] = set()
+                        for s in stints:
+                            if s.lineup_key not in seen_keys:
+                                seen_keys.add(s.lineup_key)
+                                players = s.players + [""] * (5 - len(s.players))
+                                lineup_rows.append({
+                                    "lineup_key": s.lineup_key,
+                                    "season_id": season_id,
+                                    "player1": players[0] if len(players) > 0 else "",
+                                    "player2": players[1] if len(players) > 1 else "",
+                                    "player3": players[2] if len(players) > 2 else "",
+                                    "player4": players[3] if len(players) > 3 else "",
+                                    "player5": players[4] if len(players) > 4 else "",
+                                })
 
-                    pbp_rows = [
-                        {
-                            "period": e.period,
-                            "minute_in_period": e.minute_in_period,
-                            "abs_minute": e.abs_minute,
-                            "event_type": e.event_type,
-                            "player_name": e.player_name,
-                            "team_code": e.team_code,
-                            "points": e.points,
-                            "home_score": e.home_score,
-                            "away_score": e.away_score,
-                        }
-                        for e in game_data.pbp
-                    ]
-                    upsert_pbp(gid, pbp_rows)
-
-                    # Build and save lineups/stints
-                    import pandas as pd
-                    pbp_df = pd.DataFrame(pbp_rows)
-                    box_df = pd.DataFrame(box_rows)
-                    stints = build_stints(pbp_df, box_df)
-
-                    from collections import defaultdict
-                    lineup_rows = []
-                    seen_keys: set[str] = set()
-                    for s in stints:
-                        if s.lineup_key not in seen_keys:
-                            seen_keys.add(s.lineup_key)
-                            players = s.players + [""] * (5 - len(s.players))
-                            lineup_rows.append({
+                        stint_rows = [
+                            {
                                 "lineup_key": s.lineup_key,
-                                "season_id": season_id,
-                                "player1": players[0] if len(players) > 0 else "",
-                                "player2": players[1] if len(players) > 1 else "",
-                                "player3": players[2] if len(players) > 2 else "",
-                                "player4": players[3] if len(players) > 3 else "",
-                                "player5": players[4] if len(players) > 4 else "",
-                            })
+                                "start_abs": s.start_abs,
+                                "end_abs": s.end_abs,
+                                "duration": s.duration,
+                                "pts_for": s.pts_for,
+                                "pts_against": s.pts_against,
+                            }
+                            for s in stints
+                        ]
+                        upsert_lineups(gid, lineup_rows, stint_rows)
 
-                    stint_rows = [
-                        {
-                            "lineup_key": s.lineup_key,
-                            "start_abs": s.start_abs,
-                            "end_abs": s.end_abs,
-                            "duration": s.duration,
-                            "pts_for": s.pts_for,
-                            "pts_against": s.pts_against,
-                        }
-                        for s in stints
-                    ]
-                    upsert_lineups(gid, lineup_rows, stint_rows)
+                        load_season_stints.clear()
+                        quarter_scoring.clear()
+                        player_season_totals.clear()
+                        mvp_msg = f" · MVP: {game_data.mvp_player_name}" if game_data.mvp_player_name else ""
+                        st.success(f"Partit desat! {game_data.home_team} {game_data.home_score} – {game_data.away_score} {game_data.away_team}{mvp_msg}")
+                        st.rerun()
 
-                    load_season_stints.clear()
-                    quarter_scoring.clear()
-                    player_season_totals.clear()
-                    mvp_msg = f" · MVP: {game_data.mvp_player_name}" if game_data.mvp_player_name else ""
-                    st.success(f"Partit desat! {game_data.home_team} {game_data.home_score} – {game_data.away_score} {game_data.away_team}{mvp_msg}")
-                    st.rerun()
-
-                except Exception as exc:
-                    st.error(f"Error en la importació: {exc}")
-                    st.warning("Pots introduir el partit manualment a la pestanya 'Entrada manual' a continuació.")
+                    except Exception as exc:
+                        st.error(f"Error en la importació: {exc}")
+                        st.warning("Pots introduir el partit manualment a la pestanya 'Entrada manual' a continuació.")
 
 # ---- Manual entry ----
 with tab_manual:
