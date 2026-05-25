@@ -145,10 +145,16 @@ def player_season_totals(season_id: int, stints: list[Stint]) -> pd.DataFrame:
     if box_df.empty:
         return pd.DataFrame()
 
+    # Exclude rows where the player had 0 minutes – treat them as if absent
+    box_df = box_df[box_df["minutes"] > 0].copy()
+
+    if box_df.empty:
+        return pd.DataFrame()
+
     agg = (
         box_df.groupby("player_name")
         .agg(
-            games=("minutes", lambda x: (x > 0).sum()),  # only count games with actual playing time
+            games=("minutes", "count"),  # every remaining row is a game with playing time
             minutes=("minutes", "sum"),
             pts=("pts", "sum"),
             t2_made=("t2_made", "sum"),

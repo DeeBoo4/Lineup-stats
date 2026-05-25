@@ -247,13 +247,32 @@ def stints_for_lineup(stints: list[Stint], players: list[str]) -> list[Stint]:
     return [s for s in stints if pset.issubset(set(s.players))]
 
 
-def short_name(full_name: str) -> str:
-    """Return first name + first surname only (first two space-separated words).
+# Custom display-name overrides, keyed by the first two words of the stored
+# name (uppercased, with or without accent variants).
+_NAME_OVERRIDES: dict[str, str] = {
+    "JORDANA DOMÈNECH": "Dana",
+    "JORDANA DOMENECH": "Dana",   # accent-stripped fallback
+    "AINA MARTINEZ":    "Aina M.",
+    "AINA MARTÍNEZ":    "Aina M.",
+    "AINA VERD":        "Aina V.",
+}
 
-    Examples:
+
+def short_name(full_name: str) -> str:
+    """Return display name: custom override if defined, else first-name + first-surname.
+
+    Custom overrides (matched on the first two words, case-insensitive):
+        "JORDANA DOMÈNECH ..."  → "Dana"
+        "AINA MARTINEZ ..."     → "Aina M."
+        "AINA VERD ..."         → "Aina V."
+
+    General rule (first two space-separated words):
         "ALEXIA REIXACH FONT"  → "ALEXIA REIXACH"
-        "NEREA BENITEZ"        → "NEREA BENITEZ"   (already short)
+        "NEREA BENITEZ"        → "NEREA BENITEZ"
         "MARIA JOSE GARCIA"    → "MARIA JOSE"
     """
     parts = full_name.strip().split()
+    first_two = " ".join(parts[:2]).upper() if len(parts) >= 2 else full_name.strip().upper()
+    if first_two in _NAME_OVERRIDES:
+        return _NAME_OVERRIDES[first_two]
     return " ".join(parts[:2]) if len(parts) >= 2 else full_name
