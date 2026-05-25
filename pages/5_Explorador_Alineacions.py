@@ -91,12 +91,13 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Sortable table via session state
 # ---------------------------------------------------------------------------
-SORTABLE_COLS = ["minutes", "pts_for", "pts_against", "off_rating", "def_rating", "net_rating", "count"]
+SORTABLE_COLS = ["minutes", "pts_for", "pts_against", "pts_per_min", "off_rating", "def_rating", "net_rating", "count"]
 COL_TOOLTIPS = {
     "minutes": "Minuts totals que aquesta alineació ha estat en pista conjuntament",
     "count": "Nombre de torns separats d'aquesta alineació",
     "pts_for": "Punts totals anotats pel CB Turó mentre aquesta alineació era en pista",
     "pts_against": "Punts totals rebuts mentre aquesta alineació era en pista",
+    "pts_per_min": "Punts anotats per minut mentre aquesta alineació era en pista",
     "off_rating": "Punts anotats per 40 minuts mentre aquesta alineació era en pista",
     "def_rating": "Punts rebuts per 40 minuts mentre aquesta alineació era en pista",
     "net_rating": "Rating ofensiu menys rating defensiu (com més alt millor)",
@@ -107,6 +108,7 @@ COL_LABELS = {
     "minutes": "MIN",
     "pts_for": "PTS A favor",
     "pts_against": "PTS En contra",
+    "pts_per_min": "PTS/MIN",
     "off_rating": "ORtg",
     "def_rating": "DRtg",
     "net_rating": "NRtg",
@@ -123,8 +125,8 @@ if sort_asc_key not in st.session_state:
 # Column header buttons for sorting
 st.markdown("**Clica una capçalera per ordenar. Clica de nou per invertir.**")
 
-header_cols = st.columns([3, 1, 1, 1, 1, 1, 1, 1])
-col_keys = ["lineup_name", "count", "minutes", "pts_for", "pts_against", "off_rating", "def_rating", "net_rating"]
+header_cols = st.columns([3, 1, 1, 1, 1, 1, 1, 1, 1])
+col_keys = ["lineup_name", "count", "minutes", "pts_for", "pts_against", "pts_per_min", "off_rating", "def_rating", "net_rating"]
 
 for i, (hcol, ckey) in enumerate(zip(header_cols, col_keys)):
     label = COL_LABELS[ckey]
@@ -159,16 +161,17 @@ else:
 # ---------------------------------------------------------------------------
 # Render rows
 # ---------------------------------------------------------------------------
-DISPLAY_COLS = ["lineup_name", "count", "minutes", "pts_for", "pts_against", "off_rating", "def_rating", "net_rating"]
+DISPLAY_COLS = ["lineup_name", "count", "minutes", "pts_for", "pts_against", "pts_per_min", "off_rating", "def_rating", "net_rating"]
 
 for _, row in sorted_df[DISPLAY_COLS].iterrows():
-    row_cols = st.columns([3, 1, 1, 1, 1, 1, 1, 1])
+    row_cols = st.columns([3, 1, 1, 1, 1, 1, 1, 1, 1])
     values = [
         row["lineup_name"],
         int(row["count"]),
         f"{row['minutes']:.1f}",
         int(row["pts_for"]),
         int(row["pts_against"]),
+        f"{row['pts_per_min']:.2f}",
         f"{row['off_rating']:+.1f}",
         f"{row['def_rating']:+.1f}",
         f"{row['net_rating']:+.1f}",

@@ -82,6 +82,7 @@ else:
         "player_name":    "Jugadora",
         "games":          "PJ",
         "minutes":        "MIN",
+        "pts_per_min":    "PTS/MIN",
         "on_ortg":        "ORtg",
         "on_drtg":        "DRtg",
         "on_net_rating":  "NRtg",
@@ -95,6 +96,7 @@ else:
         hide_index=True,
         use_container_width=True,
         column_config={
+            "PTS/MIN":  st.column_config.NumberColumn(format="%.2f"),
             "ORtg":     st.column_config.NumberColumn(format="%+.1f"),
             "DRtg":     st.column_config.NumberColumn(format="%+.1f"),
             "NRtg":     st.column_config.NumberColumn(format="%+.1f"),
@@ -103,6 +105,7 @@ else:
         },
     )
     st.caption(
+        "PTS/MIN = punts anotats per minut jugat · "
         "ORtg = punts anotats per 40min quan la jugadora és en pista · "
         "DRtg = punts rebuts per 40min quan la jugadora és en pista · "
         "NRtg = rating net (ORtg − DRtg) quan és en pista · "

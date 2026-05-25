@@ -164,6 +164,9 @@ def player_season_totals(season_id: int, stints: list[Stint]) -> pd.DataFrame:
         lambda r: round(r["ft_made"] / r["ft_att"] * 100, 1) if r["ft_att"] > 0 else 0.0,
         axis=1,
     )
+    agg["pts_per_min"] = (
+        agg["pts"] / agg["minutes"].replace(0, pd.NA)
+    ).fillna(0.0).round(2)
 
     # +/- per player from stints
     plus_minus_map: dict[str, float] = {}

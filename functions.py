@@ -172,7 +172,8 @@ def aggregate_stints(stints: list[Stint]) -> pd.DataFrame:
     if not stints:
         return pd.DataFrame(columns=[
             "lineup_key", "players", "count", "minutes",
-            "pts_for", "pts_against", "off_rating", "def_rating", "net_rating",
+            "pts_for", "pts_against", "pts_per_min",
+            "off_rating", "def_rating", "net_rating",
         ])
 
     from collections import defaultdict
@@ -182,11 +183,15 @@ def aggregate_stints(stints: list[Stint]) -> pd.DataFrame:
 
     records = []
     for key, group in grouped.items():
+        # Only aggregate complete 5-player lineups
+        if len(group[0].players) != 5:
+            continue
         total_min = sum(s.duration for s in group)
         total_for = sum(s.pts_for for s in group)
         total_against = sum(s.pts_against for s in group)
         off = total_for / total_min * 40 if total_min > 0 else 0.0
         defr = total_against / total_min * 40 if total_min > 0 else 0.0
+        pts_pm = total_for / total_min if total_min > 0 else 0.0
         records.append({
             "lineup_key": key,
             "players": group[0].players,
@@ -194,6 +199,7 @@ def aggregate_stints(stints: list[Stint]) -> pd.DataFrame:
             "minutes": round(total_min, 2),
             "pts_for": total_for,
             "pts_against": total_against,
+            "pts_per_min": round(pts_pm, 2),
             "off_rating": round(off, 1),
             "def_rating": round(defr, 1),
             "net_rating": round(off - defr, 1),
