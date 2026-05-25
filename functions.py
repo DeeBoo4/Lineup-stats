@@ -141,6 +141,14 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
                 if player not in active:
                     active.append(player)
             else:
+                # Mid-period sub. If the period changed but starters were not
+                # flagged as period_min=0 (a common site format variation), the
+                # previous period's lineup must be cleared first — otherwise it
+                # piles up with Q2 starters giving 10-player active lists whose
+                # stints are all discarded as invalid.
+                if period != current_period:
+                    active.clear()
+                    current_period = period
                 close(abs_min, h, a)
                 if player not in active:
                     active.append(player)
@@ -148,6 +156,10 @@ def build_stints(pbp_df: pd.DataFrame, box_df: pd.DataFrame) -> list[Stint]:
                 score_at_start = (h, a)
 
         elif etype == "sub_out" and player in cbturo_players:
+            # Also reset on unexpected period change for sub_out events
+            if period != current_period:
+                active.clear()
+                current_period = period
             if period_min != 0 and player in active:
                 close(abs_min, h, a)
                 active.remove(player)
