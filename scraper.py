@@ -714,10 +714,19 @@ def _expand_via_subs(
     """
     Expand team membership for 0-pt players using substitution pairing.
 
-    Principle: when N confirmed CB Turó players sub OUT at a given minute
-    and exactly N unidentified players sub IN at that same minute, those
-    N players must be CB Turó replacements (and vice-versa for opponents).
-    We iterate until no new identifications can be made.
+    Groups substitutions by abs_minute only (NOT by team_code).  Grouping
+    by team_code creates a circular dependency: if TIRS mis-classifies a
+    boundary player (e.g. Julia Riu), her PBP events inherit the wrong
+    team_code, so she ends up in the wrong group and the reclassification
+    can never correct her.  By ignoring team_code we break that cycle.
+
+    Principle: each team makes balanced substitutions (N out ↔ N in per
+    stoppage).  If N confirmed CB Turó players sub out and M < N of the
+    sub-ins are confirmed CB Turó, the remaining N-M unknown sub-ins must
+    also be CB Turó.  Only infers when the unknown-in count exactly matches
+    the needed count (unambiguous).  Only resolves sub-INs (not sub-OUTs)
+    to avoid false positives when both teams substitute simultaneously at
+    the same game minute.
 
     All player names are normalised to their canonical TIRS spelling so that
     minor accent differences between the TIRS and JUGADES tabs don't cause
@@ -740,11 +749,9 @@ def _expand_via_subs(
     cbturo: set[str] = _canonicalise(init_cbturo)
     opp:    set[str] = _canonicalise(init_opp)
 
-    # Group sub events by (absolute minute, team_code) so that substitutions
-    # from different teams at the same dead-ball stoppage are never paired
-    # together.  Without this, a CB Turó sub-out and an opponent sub-in at the
-    # same minute would be mistakenly treated as a CB Turó replacement pair.
-    groups: dict[tuple, dict[str, list[str]]] = defaultdict(
+    # Group substitutions by abs_minute ONLY (ignore team_code — it can be
+    # wrong for boundary players and would create a circular dependency).
+    by_minute: dict[float, dict[str, list[str]]] = defaultdict(
         lambda: {"out": [], "in": []}
     )
     for evt in pbp:
@@ -754,27 +761,29 @@ def _expand_via_subs(
         canon = _canonical_name(raw_name, norm_to_tirs)
         if not canon:
             continue   # not a box-score player
-        key = (evt.abs_minute, evt.team_code)
         if evt.event_type == "sub_out":
-            groups[key]["out"].append(canon)
+            by_minute[evt.abs_minute]["out"].append(canon)
         elif evt.event_type == "sub_in":
-            groups[key]["in"].append(canon)
+            by_minute[evt.abs_minute]["in"].append(canon)
 
     changed = True
     while changed:
         changed = False
-        for t in sorted(groups.keys()):
-            g = groups[t]
+        for minute in sorted(by_minute.keys()):
+            subs = by_minute[minute]
+            all_out = subs["out"]
+            all_in  = subs["in"]
+
             for my_set, other_set in [(cbturo, opp), (opp, cbturo)]:
-                n_my_out  = sum(1 for p in g["out"] if p in my_set)
-                n_my_in   = sum(1 for p in g["in"]  if p in my_set)
-                n_needed  = n_my_out - n_my_in   # how many new same-team sub-ins
-                candidates = [
-                    p for p in g["in"]
-                    if p not in my_set and p not in other_set
-                ]
-                if n_needed > 0 and len(candidates) == n_needed:
-                    for p in candidates:
+                my_out = [p for p in all_out if p in my_set]
+                my_in  = [p for p in all_in  if p in my_set]
+                # Only resolve unknown sub-INs (not sub-OUTs) to avoid
+                # false positives when both teams substitute at the same minute
+                unknowns_in = [p for p in all_in if p not in cbturo and p not in opp]
+
+                n_needed = len(my_out) - len(my_in)
+                if n_needed > 0 and len(unknowns_in) == n_needed:
+                    for p in unknowns_in:
                         my_set.add(p)
                     changed = True
 
