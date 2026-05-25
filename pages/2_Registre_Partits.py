@@ -167,6 +167,17 @@ with tab_url:
         else:
             with st.spinner("Descarregant i processant el partit…"):
                 try:
+                    import httpx as _httpx
+                    from bs4 import BeautifulSoup as _BS
+                    _hdrs = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept-Language": "ca,es;q=0.9,en;q=0.7",
+                    }
+                    _resp = _httpx.get(url_input.strip(), headers=_hdrs, cookies={"fcbq_rc": session_cookie}, follow_redirects=True, timeout=30)
+                    _preview = _BS(_resp.text, "html.parser").get_text("\n", strip=True)[:1500]
+                    with st.expander("🔍 Diagnòstic — primers 1500 caràcters del contingut rebut"):
+                        st.text(f"URL final: {_resp.url}\nHTTP: {_resp.status_code}\n\n{_preview}")
+
                     game_data = scrape_game(url_input.strip(), session_cookie=session_cookie)
 
                     game_date_guess = date.today()
