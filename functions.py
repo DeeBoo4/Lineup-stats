@@ -259,20 +259,20 @@ _NAME_OVERRIDES: dict[str, str] = {
 
 
 def short_name(full_name: str) -> str:
-    """Return display name in ALL CAPS: custom override if defined, else first-name + first-surname.
+    """Return display name in ALL CAPS: custom override if defined, else first name only.
 
     Custom overrides (matched on the first two words, case-insensitive):
         "JORDANA DOMÈNECH ..."  → "DANA"
         "AINA MARTINEZ ..."     → "AINA M."
         "AINA VERD ..."         → "AINA V."
 
-    General rule (first two space-separated words, all caps):
-        "ALEXIA REIXACH FONT"  → "ALEXIA REIXACH"
-        "NEREA BENITEZ"        → "NEREA BENITEZ"
-        "MARIA JOSE GARCIA"    → "MARIA JOSE"
+    General rule (first word only, uppercased):
+        "ALEXIA REIXACH FONT"  → "ALEXIA"
+        "NEREA BENITEZ"        → "NEREA"
+        "MARIA JOSE GARCIA"    → "MARIA"
     """
     parts = full_name.strip().split()
     first_two = " ".join(parts[:2]).upper() if len(parts) >= 2 else full_name.strip().upper()
     if first_two in _NAME_OVERRIDES:
         return _NAME_OVERRIDES[first_two]
-    return first_two if len(parts) >= 2 else full_name.upper()
+    return parts[0].upper() if parts else full_name.upper()
